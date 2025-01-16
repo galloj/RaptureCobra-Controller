@@ -19,8 +19,9 @@ class Color:
     def color_to_bytes(self):
         return [self.r, self.g, self.b]
 
-# not sure what is purpose of this packet, but it is sent before every other packet
-#send_packet(dev, 0x0c, [0x01, 0x05])
+def set_active_profile(dev, profile_id):
+    send_packet(dev, 0x0c, [profile_id, 0x05])
+
 #import time
 #time.sleep(0.1)
 
@@ -37,11 +38,11 @@ class Color:
 
 # mode speed 0 is fastest, 255 is slowest
 
-def set_color(dev, color, color_mode, mode_speed):
+def set_color(dev, profile_id, color, color_mode, mode_speed):
     color_brightness = 0x08 # 0 is lowest, 8 is highest; or maybe actually pwm resolution?
-    send_packet(dev, 0x05, [0x01, color_mode, mode_speed, color_brightness] + color.color_to_bytes() + [0x01, 0x01, 0x00, 0x00])
+    send_packet(dev, 0x05, [profile_id, color_mode, mode_speed, color_brightness] + color.color_to_bytes() + [0x01, 0x01, 0x00, 0x00])
 
-#set_color(dev, Color(0xff, 0xff, 0xff), 0x07, 0x04)
+#set_color(dev, 1, Color(0xff, 0xff, 0xff), 0x07, 0x04)
 
 # only supported polling rates are:
 # 0x01 - 1000 Hz
@@ -49,10 +50,10 @@ def set_color(dev, color, color_mode, mode_speed):
 # 0x04 - 250 Hz
 # 0x08 - 125 Hz
 # others set it to 250 Hz
-def set_polling_rate(dev, pooling_rate):
-    send_packet(dev, 0x06, [0x01, pooling_rate, 0x00, 0x00, 0x00, 0x00, 0x00])
+def set_polling_rate(dev, profile_id, pooling_rate):
+    send_packet(dev, 0x06, [profile_id, pooling_rate, 0x00, 0x00, 0x00, 0x00, 0x00])
 
-#set_polling_rate(dev, 0x1)
+#set_polling_rate(dev, 1, 0x1)
 
 # default values: 800, 1200, 2000, 3200, 5000
 # DPI table:
@@ -74,7 +75,7 @@ def set_polling_rate(dev, pooling_rate):
 # 9000 - 0x168
 # 10000 - 0x173
 
-def set_dpi(dev, default_option, speeds, colors):
+def set_dpi(dev, profile_id, default_option, speeds, colors):
     assert len(speeds) > 0
     assert len(speeds) <= 8
     assert default_option >= 1 and default_option <= len(speeds)
@@ -88,7 +89,7 @@ def set_dpi(dev, default_option, speeds, colors):
         colors.append(Color(0xff, 0xff, 0xff))
     assert len(speeds) == 8
     assert len(colors) == 8
-    data = [0x01, 0x08, 0x08, enabled_options]
+    data = [profile_id, 0x08, 0x08, enabled_options]
     for _ in range(2):
         number = 0
         for x in range(8):
@@ -104,6 +105,7 @@ def set_dpi(dev, default_option, speeds, colors):
     send_packet(dev, 0x04, data)
 
 """set_dpi(dev, 
+    1,
     3,
 [
     0x12,
@@ -118,3 +120,83 @@ def set_dpi(dev, default_option, speeds, colors):
     Color(0xff, 0x00, 0xff),
     Color(0x00, 0xff, 0xff),
 ])"""
+
+
+# left click is [0x02, 0x00, 0x00]
+# cycle dpi is [0x0d, 0x00, 0x00]
+# dpi+ is [0x0e, 0x00, 0x00]
+# dpi- is [0x0f, 0x00, 0x00]
+# keyboard click is [0x11, modifier, hid_code]
+# if keyboard modifier is 0x01, then ctrl is pressed
+# macro is [0x12, 0x00, macro_id]
+
+# buttons configuration contains 24 buttons -> 72 bytes
+
+# button order:
+# - left
+# - right
+# - middle
+# - side up
+# - side down
+# - unknown
+# - center up
+# - center down
+
+def set_key_binding(dev, profile_id, buttons_configuration):
+    assert profile_id >= 1
+
+    send_packet(dev, 0x08, [profile_id] + buttons_configuration + [0x00, 0x00])
+
+class MacroButtonPress:
+    # button from https://deskthority.net/wiki/Scancode
+    # or alternative mouse buttons:
+    # 0xf1 - mouse left button
+    # 0xf2 - mouse right button
+    # 0xf3 - mouse middle button
+    # 0xf4 - mouse backward button
+    # 0xf5 - mouse forward button
+    #
+    # delay is in ms
+    #
+    # release is True if it isn't press, but release
+    def __init__(self, button, delay, release):
+        self.button = button
+        self.delay = delay
+        self.release = release
+
+    def to_bytes(self):
+        delay_num = round(self.delay/2)
+        assert delay_num >= 0 and delay_num <= 0x7f
+        return [(0x80 * self.release) | delay_num, self.button]
+    
+class MacroDelay:
+    # delay is in ms
+    def __init__(self, delay):
+        self.delay = delay
+
+    def to_bytes(self):
+        delay_num = round(self.delay/200)
+        assert delay_num >= 0 and delay_num <= 0xff
+        return [delay_num, 0x03]
+
+# repeat_condition:
+# 0 - repeat based on repeat count
+# 1 - repeat till another button press
+# 2 - repeat till button release
+
+def set_macro(dev, profile_id, repeat_condition, repeat_count, macro_name, macro):
+    assert profile_id >= 1
+
+    macro_name = macro_name.encode('ascii')
+    assert len(macro_name) <= 20
+    macro_name += b'\x00' * (20 - len(macro_name))
+
+    assert len(macro) <= 200
+
+    byte_macro = []
+    for x in macro:
+        byte_macro += x.to_bytes()
+    byte_macro += [0x00] * (200 - len(byte_macro))
+
+
+    send_packet(dev, 0x09, [profile_id, repeat_condition, 0x00, 0x00, 0x00, repeat_count, macro_name, len(macro)] + byte_macro)
