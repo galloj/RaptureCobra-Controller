@@ -1,4 +1,6 @@
 import libusb_package
+from enum import IntEnum
+from abc import ABC, abstractmethod
 
 dev = libusb_package.find(idVendor=0x1d57, idProduct=0xfa61)
 
@@ -6,12 +8,12 @@ if dev is None:
     print("Mouse not found!")
     exit(1)
 
-def send_packet(dev, packet_id, packet_data):
+def send_packet(dev, packet_id: int, packet_data: list[int]):
     print([packet_id, len(packet_data) + 2] + packet_data)
     assert dev.ctrl_transfer(0x21, 0x09, 0x0300 | packet_id, 2, [packet_id, len(packet_data) + 2] + packet_data)
 
 class Color:
-    def __init__(self, r, g, b):
+    def __init__(self, r: int, g: int, b: int):
         self.r = r
         self.g = g
         self.b = b
@@ -19,41 +21,43 @@ class Color:
     def color_to_bytes(self):
         return [self.r, self.g, self.b]
 
-def set_active_profile(dev, profile_id):
+def set_active_profile(dev, profile_id: int):
     send_packet(dev, 0x0c, [profile_id, 0x05])
 
 #import time
 #time.sleep(0.1)
 
-# color modes:
-# 0x00 - disabled
-# 0x01 - static
-# 0x02 - breathing
-# 0x03 - color cycle
-# 0x04 - color cycle breathing
-# 0x05 - wheel color static
-# 0x06 - wheel color breathing
-# 0x07 - color cycle sliding
-# 0x08 - knight rider
+class ColorMode(IntEnum):
+    DISABLED = 0x00
+    STATIC = 0x01
+    BREATHING = 0x02
+    COLOR_CYCLE = 0x03
+    COLOR_CYCLE_BREATHING = 0x04
+    WHEEL_COLOR_STATIC = 0x05
+    WHEEL_COLOR_BREATHING = 0x06
+    COLOR_CYCLE_SLIDING = 0x07
+    KNIGHT_RIDER = 0x08
 
 # mode speed 0 is fastest, 255 is slowest
 
-def set_color(dev, profile_id, color, color_mode, mode_speed):
+def set_color(dev, profile_id: int, color: Color, color_mode: ColorMode, mode_speed: int):
     color_brightness = 0x08 # 0 is lowest, 8 is highest; or maybe actually pwm resolution?
     send_packet(dev, 0x05, [profile_id, color_mode, mode_speed, color_brightness] + color.color_to_bytes() + [0x01, 0x01, 0x00, 0x00])
 
-#set_color(dev, 1, Color(0xff, 0xff, 0xff), 0x07, 0x04)
+#set_color(dev, 1, Color(0xff, 0xff, 0xff), ColorMode.COLOR_CYCLE_SLIDING, 0x04)
 
-# only supported polling rates are:
-# 0x01 - 1000 Hz
-# 0x02 - 500 Hz
-# 0x04 - 250 Hz
-# 0x08 - 125 Hz
-# others set it to 250 Hz
-def set_polling_rate(dev, profile_id, pooling_rate):
+
+class PollingRate(IntEnum):
+    HZ_1000 = 0x01 # 1000 Hz
+    HZ_500 = 0x02 # 500 Hz
+    HZ_250 = 0x03 # 250 Hz
+    HZ_125 = 0x04 # 125 Hz
+    # other values set it to 250 Hz
+
+def set_polling_rate(dev, profile_id: int, pooling_rate: PollingRate):
     send_packet(dev, 0x06, [profile_id, pooling_rate, 0x00, 0x00, 0x00, 0x00, 0x00])
 
-#set_polling_rate(dev, 1, 0x1)
+#set_polling_rate(dev, 1, PollingRate.HZ_1000)
 
 # default values: 800, 1200, 2000, 3200, 5000
 # DPI table:
@@ -75,7 +79,7 @@ def set_polling_rate(dev, profile_id, pooling_rate):
 # 9000 - 0x168
 # 10000 - 0x173
 
-def set_dpi(dev, profile_id, default_option, speeds, colors):
+def set_dpi(dev, profile_id: int, default_option: int, speeds: list[int], colors: list[Color]):
     assert len(speeds) > 0
     assert len(speeds) <= 8
     assert default_option >= 1 and default_option <= len(speeds)
@@ -142,12 +146,17 @@ def set_dpi(dev, profile_id, default_option, speeds, colors):
 # - center up
 # - center down
 
-def set_key_binding(dev, profile_id, buttons_configuration):
+def set_key_binding(dev, profile_id: int, buttons_configuration: list[int]):
     assert profile_id >= 1
 
     send_packet(dev, 0x08, [profile_id] + buttons_configuration + [0x00, 0x00])
 
-class MacroButtonPress:
+class MacroCommand(ABC):
+    @abstractmethod
+    def to_bytes(self) -> list[int]:
+        pass
+
+class MacroButtonPress(MacroCommand):
     # button from https://deskthority.net/wiki/Scancode
     # or alternative mouse buttons:
     # 0xf1 - mouse left button
@@ -159,7 +168,7 @@ class MacroButtonPress:
     # delay is in ms
     #
     # release is True if it isn't press, but release
-    def __init__(self, button, delay, release):
+    def __init__(self, button: int, delay: int, release: bool):
         self.button = button
         self.delay = delay
         self.release = release
@@ -169,9 +178,9 @@ class MacroButtonPress:
         assert delay_num >= 0 and delay_num <= 0x7f
         return [(0x80 * self.release) | delay_num, self.button]
     
-class MacroDelay:
+class MacroDelay(MacroCommand):
     # delay is in ms
-    def __init__(self, delay):
+    def __init__(self, delay: int):
         self.delay = delay
 
     def to_bytes(self):
@@ -179,17 +188,17 @@ class MacroDelay:
         assert delay_num >= 0 and delay_num <= 0xff
         return [delay_num, 0x03]
 
-# repeat_condition:
-# 0 - repeat based on repeat count
-# 1 - repeat till another button press
-# 2 - repeat till button release
+class RepeatCondition(IntEnum):
+    REPEAT_COUNT = 0 # repeat based on repeat count
+    BUTTON_PRESS = 1 # repeat till another button press
+    BUTTON_RELEASE = 2 # repeat till button release
 
-def set_macro(dev, profile_id, repeat_condition, repeat_count, macro_name, macro):
+def set_macro(dev, profile_id: int, repeat_condition: RepeatCondition, repeat_count: int, macro_name: str, macro: list[MacroCommand]):
     assert profile_id >= 1
 
-    macro_name = macro_name.encode('ascii')
+    macro_name_bytes = [*macro_name.encode('ascii')]
     assert len(macro_name) <= 20
-    macro_name += b'\x00' * (20 - len(macro_name))
+    macro_name_bytes += b'\x00' * (20 - len(macro_name))
 
     assert len(macro) <= 200
 
@@ -199,4 +208,4 @@ def set_macro(dev, profile_id, repeat_condition, repeat_count, macro_name, macro
     byte_macro += [0x00] * (200 - len(byte_macro))
 
 
-    send_packet(dev, 0x09, [profile_id, repeat_condition, 0x00, 0x00, 0x00, repeat_count, macro_name, len(macro)] + byte_macro)
+    send_packet(dev, 0x09, [profile_id, repeat_condition, 0x00, 0x00, 0x00, repeat_count] + macro_name_bytes + [len(macro)] + byte_macro)
