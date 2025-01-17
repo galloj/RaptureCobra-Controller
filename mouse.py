@@ -127,6 +127,16 @@ def set_dpi(dev, profile_id: int, default_option: int, speeds: list[int], colors
 
 
 # left click is [0x02, 0x00, 0x00]
+# right lick click is [0x03, 0x00, 0x00]
+# middle click is [0x04, 0x00, 0x00]
+# back button [0x05, 0x00, 0x00]
+# forward button [0x06, 0x00, 0x00]
+# left double click [0x07, 0x00, 0x00]
+# repeated left click [0x08, 0x00, 0x00]
+# scroll up [0x09, 0x00, 0x00]
+# scroll down [0x0a, 0x00, 0x00]
+# scroll left [0x0b, 0x00, 0x00]
+# scroll right [0x0c, 0x00, 0x00]
 # cycle dpi is [0x0d, 0x00, 0x00]
 # dpi+ is [0x0e, 0x00, 0x00]
 # dpi- is [0x0f, 0x00, 0x00]
@@ -145,6 +155,10 @@ def set_dpi(dev, profile_id: int, default_option: int, speeds: list[int], colors
 # - unknown
 # - center up
 # - center down
+# - unknown
+# - unknown
+# - scroll down
+# - scroll up
 
 def set_key_binding(dev, profile_id: int, buttons_configuration: list[int]):
     assert profile_id >= 1
